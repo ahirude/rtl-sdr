@@ -83,9 +83,13 @@ int main(int argc, char **argv)
 	}
 
 	r = rtlsdr_open(&dev, dev_index);
-	rtlsdr_set_bias_tee_gpio(dev, gpio_pin, bias_on);
+	if (r < 0) {
+		fprintf(stderr, "Failed to open rtlsdr device #%d.\n", dev_index);
+		return r;
+	}
 
-exit:
+	r = rtlsdr_set_bias_tee_gpio(dev, gpio_pin, bias_on);
+
 	/*
 	 * Note - rtlsdr_close() in this tree does not clear the bias tee
 	 * GPIO line, so it leaves the bias tee enabled if a client program

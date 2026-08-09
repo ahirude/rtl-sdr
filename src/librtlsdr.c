@@ -42,6 +42,8 @@
 /* two raised to the power of n */
 #define TWO_POW(n)		((double)(1ULL<<(n)))
 
+#define ARRAY_SIZE(arr)		(sizeof(arr) / sizeof((arr)[0]))
+
 #include "rtl-sdr.h"
 #include "tuner_e4k.h"
 #include "tuner_fc0012.h"
@@ -357,6 +359,10 @@ static rtlsdr_dongle_t known_devices[] = {
 #define DEF_RTL_XTAL_FREQ	28800000
 #define MIN_RTL_XTAL_FREQ	(DEF_RTL_XTAL_FREQ - 1000)
 #define MAX_RTL_XTAL_FREQ	(DEF_RTL_XTAL_FREQ + 1000)
+
+/* tuner crystal frequency range (E4K and R82XX accept 16-30 MHz) */
+#define MIN_TUNER_XTAL_FREQ	16000000
+#define MAX_TUNER_XTAL_FREQ	30000000
 
 #define CTRL_IN		(LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_IN)
 #define CTRL_OUT	(LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_OUT)
@@ -734,6 +740,10 @@ int rtlsdr_set_xtal_freq(rtlsdr_dev_t *dev, uint32_t rtl_freq, uint32_t tuner_fr
 		(rtl_freq < MIN_RTL_XTAL_FREQ || rtl_freq > MAX_RTL_XTAL_FREQ))
 		return -2;
 
+	if (tuner_freq > 0 &&
+		(tuner_freq < MIN_TUNER_XTAL_FREQ || tuner_freq > MAX_TUNER_XTAL_FREQ))
+		return -2;
+
 	if (rtl_freq > 0 && dev->rtl_xtal != rtl_freq) {
 		dev->rtl_xtal = rtl_freq;
 
@@ -982,33 +992,33 @@ int rtlsdr_get_tuner_gains(rtlsdr_dev_t *dev, int *gains)
 
 	switch (dev->tuner_type) {
 	case RTLSDR_TUNER_E4000:
-		ptr = e4k_gains; len = sizeof(e4k_gains);
+		ptr = e4k_gains; len = ARRAY_SIZE(e4k_gains);
 		break;
 	case RTLSDR_TUNER_FC0012:
-		ptr = fc0012_gains; len = sizeof(fc0012_gains);
+		ptr = fc0012_gains; len = ARRAY_SIZE(fc0012_gains);
 		break;
 	case RTLSDR_TUNER_FC0013:
-		ptr = fc0013_gains; len = sizeof(fc0013_gains);
+		ptr = fc0013_gains; len = ARRAY_SIZE(fc0013_gains);
 		break;
 	case RTLSDR_TUNER_FC2580:
-		ptr = fc2580_gains; len = sizeof(fc2580_gains);
+		ptr = fc2580_gains; len = ARRAY_SIZE(fc2580_gains);
 		break;
 	case RTLSDR_TUNER_R820T:
 	case RTLSDR_TUNER_R828D:
-		ptr = r82xx_gains; len = sizeof(r82xx_gains);
+		ptr = r82xx_gains; len = ARRAY_SIZE(r82xx_gains);
 		break;
 	default:
-		ptr = unknown_gains; len = sizeof(unknown_gains);
+		ptr = unknown_gains; len = ARRAY_SIZE(unknown_gains);
 		break;
 	}
 
 	if (!gains) { /* no buffer provided, just return the count */
-		return len / sizeof(int);
+		return len;
 	} else {
 		if (len)
-			memcpy(gains, ptr, len);
+			memcpy(gains, ptr, len * sizeof(int));
 
-		return len / sizeof(int);
+		return len;
 	}
 }
 

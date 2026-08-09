@@ -398,6 +398,7 @@ static void *command_worker(void *arg)
 			break;
 		}
 		cmd.cmd = 0xff;
+		cmd.param = 0;
 	}
 }
 
@@ -498,9 +499,9 @@ int main(int argc, char **argv)
 	    exit(1);
 	}
 
-	rtlsdr_open(&dev, (uint32_t)dev_index);
-	if (NULL == dev) {
-	fprintf(stderr, "Failed to open rtlsdr device #%d.\n", dev_index);
+	r = rtlsdr_open(&dev, (uint32_t)dev_index);
+	if (r < 0) {
+		fprintf(stderr, "Failed to open rtlsdr device #%d.\n", dev_index);
 		exit(1);
 	}
 

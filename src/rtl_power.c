@@ -437,23 +437,23 @@ void frequency_range(char *arg, double crop)
 	struct tuning_state *ts;
 	/* hacky string parsing */
 	start = arg;
-	stop = strchr(start, ':') + 1;
-	if (stop == (char *)1) {
+	stop = strchr(start, ':');
+	if (stop == NULL) {
 		fprintf(stderr, "Bad frequency range specification: %s\n", arg);
 		exit(1);
 	}
-	stop[-1] = '\0';
-	step = strchr(stop, ':') + 1;
-	if (step == (char *)1) {
+	*stop = '\0';
+	stop++;
+	step = strchr(stop, ':');
+	if (step == NULL) {
 		fprintf(stderr, "Bad frequency range specification: %s\n", arg);
 		exit(1);
 	}
-	step[-1] = '\0';
+	*step = '\0';
+	step++;
 	lower = (int)atofs(start);
 	upper = (int)atofs(stop);
 	max_size = (int)atofs(step);
-	stop[-1] = ':';
-	step[-1] = ':';
 	if (upper <= lower) {
 		fprintf(stderr, "Error: upper frequency must be higher than "
 			"lower frequency: %s\n", arg);
@@ -1018,10 +1018,10 @@ int main(int argc, char **argv)
 	rtlsdr_close(dev);
 	free(fft_buf);
 	free(window_coefs);
-	//for (i=0; i<tune_count; i++) {
-	//	free(tunes[i].avg);
-	//	free(tunes[i].buf8);
-	//}
+	for (i=0; i<tune_count; i++) {
+		free(tunes[i].avg);
+		free(tunes[i].buf8);
+	}
 	return r >= 0 ? r : -r;
 }
 

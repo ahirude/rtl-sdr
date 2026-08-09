@@ -358,9 +358,6 @@ int main(int argc, char **argv)
 		goto exit;
 	}
 
-	if (r < 0)
-		return -1;
-
 	fprintf(stderr, "Current configuration:\n");
 	parse_eeprom_to_conf(&conf, buf);
 	dump_config(&conf);

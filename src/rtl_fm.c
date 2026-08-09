@@ -941,26 +941,25 @@ void frequency_range(struct controller_state *s, char *arg)
 	char *start, *stop, *step;
 	int i;
 	start = arg;
-	stop = strchr(start, ':') + 1;
-	if (stop == (char *)1) { // no stop or step given
+	stop = strchr(start, ':');
+	if (stop == NULL) { // no stop or step given
 		add_frequency(s, (uint32_t) atofs(start));
 		return;
 	}
-	stop[-1] = '\0';
-	step = strchr(stop, ':') + 1;
-	if (step == (char *)1) { // no step given
+	*stop = '\0';
+	stop++;
+	step = strchr(stop, ':');
+	if (step == NULL) { // no step given
 		add_frequency(s, (uint32_t) atofs(start));
 		add_frequency(s, (uint32_t) atofs(stop));
-		stop[-1] = ':';
 		return;
 	}
-	step[-1] = '\0';
+	*step = '\0';
+	step++;
 	for(i=(int)atofs(start); i<=(int)atofs(stop); i+=(int)atofs(step))
 	{
 		add_frequency(s, (uint32_t)i);
 	}
-	stop[-1] = ':';
-	step[-1] = ':';
 }
 
 void dongle_init(struct dongle_state *s)

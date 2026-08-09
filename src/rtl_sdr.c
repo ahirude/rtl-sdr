@@ -178,6 +178,10 @@ int main(int argc, char **argv)
 	}
 
 	buffer = malloc(out_block_size * sizeof(uint8_t));
+	if (!buffer) {
+		fprintf(stderr, "Failed to allocate buffer.\n");
+		exit(1);
+	}
 
 	if (!dev_given) {
 		dev_index = verbose_device_search("0");
