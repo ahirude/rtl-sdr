@@ -926,6 +926,16 @@ static void *controller_thread_fn(void *arg)
 	return 0;
 }
 
+void add_frequency(struct controller_state *s, uint32_t freq)
+{
+	if (s->freq_len >= FREQUENCIES_LIMIT) {
+		fprintf(stderr, "Too many channels, maximum %i.\n", FREQUENCIES_LIMIT);
+		exit(1);
+	}
+	s->freqs[s->freq_len] = freq;
+	s->freq_len++;
+}
+
 void frequency_range(struct controller_state *s, char *arg)
 {
 	char *start, *stop, *step;
@@ -933,27 +943,21 @@ void frequency_range(struct controller_state *s, char *arg)
 	start = arg;
 	stop = strchr(start, ':') + 1;
 	if (stop == (char *)1) { // no stop or step given
-		s->freqs[s->freq_len] = (uint32_t) atofs(start);
-		s->freq_len++;
+		add_frequency(s, (uint32_t) atofs(start));
 		return;
 	}
 	stop[-1] = '\0';
 	step = strchr(stop, ':') + 1;
 	if (step == (char *)1) { // no step given
-		s->freqs[s->freq_len] = (uint32_t) atofs(start);
-		s->freq_len++;
-		s->freqs[s->freq_len] = (uint32_t) atofs(stop);
-		s->freq_len++;
+		add_frequency(s, (uint32_t) atofs(start));
+		add_frequency(s, (uint32_t) atofs(stop));
 		stop[-1] = ':';
 		return;
 	}
 	step[-1] = '\0';
 	for(i=(int)atofs(start); i<=(int)atofs(stop); i+=(int)atofs(step))
 	{
-		s->freqs[s->freq_len] = (uint32_t)i;
-		s->freq_len++;
-		if (s->freq_len >= FREQUENCIES_LIMIT) {
-			break;}
+		add_frequency(s, (uint32_t)i);
 	}
 	stop[-1] = ':';
 	step[-1] = ':';
@@ -1052,6 +1056,18 @@ void sanity_checks(void)
 		exit(1);
 	}
 
+	/* a zero rate divides by zero in optimal_settings() */
+	if (demod.rate_in <= 0 || demod.rate_out <= 0) {
+		fprintf(stderr, "Please specify a positive sample rate.\n");
+		exit(1);
+	}
+
+	/* low_pass_real() computes rate_out/rate_out2, which must not be 0 */
+	if (demod.rate_out2 > 0 && demod.rate_out2 > demod.rate_out) {
+		fprintf(stderr, "Output rate (-r) must not be higher than the sample rate (-s).\n");
+		exit(1);
+	}
+
 }
 
 int main(int argc, char **argv)
@@ -1081,8 +1097,7 @@ int main(int argc, char **argv)
 				{frequency_range(&controller, optarg);}
 			else
 			{
-				controller.freqs[controller.freq_len] = (uint32_t)atofs(optarg);
-				controller.freq_len++;
+				add_frequency(&controller, (uint32_t)atofs(optarg));
 			}
 			break;
 		case 'g':
@@ -1103,7 +1118,8 @@ int main(int argc, char **argv)
 			fprintf(stderr, "Warning: -o is very buggy\n");
 			demod.post_downsample = (int)atof(optarg);
 			if (demod.post_downsample < 1 || demod.post_downsample > MAXIMUM_OVERSAMPLE) {
-				fprintf(stderr, "Oversample must be between 1 and %i\n", MAXIMUM_OVERSAMPLE);}
+				fprintf(stderr, "Oversample must be between 1 and %i\n", MAXIMUM_OVERSAMPLE);
+				exit(1);}
 			break;
 		case 't':
 			demod.conseq_squelch = (int)atof(optarg);

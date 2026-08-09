@@ -454,6 +454,15 @@ void frequency_range(char *arg, double crop)
 	max_size = (int)atofs(step);
 	stop[-1] = ':';
 	step[-1] = ':';
+	if (upper <= lower) {
+		fprintf(stderr, "Error: upper frequency must be higher than "
+			"lower frequency: %s\n", arg);
+		exit(1);
+	}
+	if (max_size <= 0) {
+		fprintf(stderr, "Error: bin size must be positive: %s\n", arg);
+		exit(1);
+	}
 	downsample = 1;
 	downsample_passes = 0;
 	/* evenly sized ranges, as close to MAXIMUM_RATE as possible */
@@ -583,6 +592,8 @@ void remove_dc(int16_t *data, int length)
 	int i;
 	int16_t ave;
 	long sum = 0L;
+	if (length <= 0) {
+		return;}
 	for (i=0; i < length; i+=2) {
 		sum += data[i];
 	}
@@ -875,8 +886,9 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
-	if ((crop < 0.0) || (crop > 1.0)) {
-		fprintf(stderr, "Crop value outside of 0 to 1.\n");
+	/* a crop of exactly 1 would divide by zero further down */
+	if ((crop < 0.0) || (crop >= 1.0)) {
+		fprintf(stderr, "Crop value outside of 0 to 1 (exclusive).\n");
 		exit(1);
 	}
 

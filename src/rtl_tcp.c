@@ -54,13 +54,14 @@ typedef int socklen_t;
 #define SOCKADDR struct sockaddr
 #define SOCKET int
 #define SOCKET_ERROR -1
+#define INVALID_SOCKET (-1)
 #endif
 
 #define DEFAULT_PORT_STR "1234"
 #define DEFAULT_SAMPLE_RATE_HZ 2048000
 #define DEFAULT_MAX_NUM_BUFFERS 500
 
-static SOCKET s;
+static SOCKET s = INVALID_SOCKET;
 
 static pthread_t tcp_worker_thread;
 static pthread_t command_thread;
@@ -156,7 +157,16 @@ void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 {
 	if(!do_exit) {
 		struct llist *rpt = (struct llist*)malloc(sizeof(struct llist));
+		if (!rpt) {
+			fprintf(stderr, "malloc failed, dropping buffer\n");
+			return;
+		}
 		rpt->data = (char*)malloc(len);
+		if (!rpt->data) {
+			fprintf(stderr, "malloc failed, dropping buffer\n");
+			free(rpt);
+			return;
+		}
 		memcpy(rpt->data, buf, len);
 		rpt->len = len;
 		rpt->next = NULL;
@@ -174,7 +184,9 @@ void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 				num_queued++;
 			}
 
-			if(llbuf_num && llbuf_num == num_queued-2){
+			/* never drop the head while it is also the tail we are
+			 * about to append to, that would free it under our feet */
+			if(llbuf_num && llbuf_num == num_queued-2 && ll_buffers != cur){
 				struct llist *curelem;
 
 				free(ll_buffers->data);
@@ -239,10 +251,16 @@ static void *tcp_worker(void *arg)
 				r = select(s+1, NULL, &writefds, NULL, &tv);
 				if(r) {
 					bytessent = send(s,  &curelem->data[index], bytesleft, 0);
+					if (bytessent <= 0) {
+						/* connection closed or error */
+						printf("worker socket bye\n");
+						sighandler(0);
+						pthread_exit(NULL);
+					}
 					bytesleft -= bytessent;
 					index += bytessent;
 				}
-				if(bytessent == SOCKET_ERROR || do_exit) {
+				if(do_exit) {
 						printf("worker socket bye\n");
 						sighandler(0);
 						pthread_exit(NULL);
@@ -304,9 +322,15 @@ static void *command_worker(void *arg)
 			r = select(s+1, &readfds, NULL, NULL, &tv);
 			if(r) {
 				received = recv(s, (char*)&cmd+(sizeof(cmd)-left), left, 0);
+				if (received <= 0) {
+					/* connection closed or error */
+					printf("comm recv bye\n");
+					sighandler(0);
+					pthread_exit(NULL);
+				}
 				left -= received;
 			}
-			if(received == SOCKET_ERROR || do_exit) {
+			if(do_exit) {
 				printf("comm recv bye\n");
 				sighandler(0);
 				pthread_exit(NULL);
@@ -407,6 +431,7 @@ int main(int argc, char **argv)
 	socklen_t rlen;
 	fd_set readfds;
 	u_long blockmode = 1;
+	int bound = 0;
 	dongle_info_t dongle_info;
 #ifdef _WIN32
 	WSADATA wsd;
@@ -441,6 +466,11 @@ int main(int argc, char **argv)
 			break;
 		case 'n':
 			llbuf_num = atoi(optarg);
+			if (llbuf_num < 0) {
+				fprintf(stderr, "Number of linked list buffers "
+					"must not be negative.\n");
+				exit(1);
+			}
 			break;
 		case 'P':
 			ppm_error = atoi(optarg);
@@ -536,7 +566,6 @@ int main(int argc, char **argv)
 
 	pthread_mutex_init(&exit_cond_lock, NULL);
 	pthread_mutex_init(&ll_mutex, NULL);
-	pthread_mutex_init(&exit_cond_lock, NULL);
 	pthread_cond_init(&cond, NULL);
 	pthread_cond_init(&exit_cond, NULL);
 
@@ -554,7 +583,6 @@ int main(int argc, char **argv)
 		        addr, gai_strerror(aiErr));
 		return(-1);
 	}
-	memcpy(&local, aiHead->ai_addr, aiHead->ai_addrlen);
 
 	for (ai = aiHead; ai != NULL; ai = ai->ai_next) {
 		aiErr = getnameinfo((struct sockaddr *)ai->ai_addr, ai->ai_addrlen,
@@ -564,17 +592,32 @@ int main(int argc, char **argv)
 			fprintf( stderr, "getnameinfo ERROR - %s.\n",hostinfo);
 
 		listensocket = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-		if (listensocket < 0)
+		if (listensocket == INVALID_SOCKET)
 			continue;
 
 		r = 1;
 		setsockopt(listensocket, SOL_SOCKET, SO_REUSEADDR, (char *)&r, sizeof(int));
 		setsockopt(listensocket, SOL_SOCKET, SO_LINGER, (char *)&ling, sizeof(ling));
 
-		if (bind(listensocket, (struct sockaddr *)&local, aiHead->ai_addrlen))
-			fprintf(stderr, "rtl_tcp bind error: %s", strerror(errno));
-		else
+		/* bind the address belonging to this very addrinfo, not the
+		 * one of the list head */
+		memcpy(&local, ai->ai_addr, ai->ai_addrlen);
+
+		if (bind(listensocket, (struct sockaddr *)&local, ai->ai_addrlen)) {
+			fprintf(stderr, "rtl_tcp bind error: %s\n", strerror(errno));
+			closesocket(listensocket);
+		} else {
+			bound = 1;
 			break;
+		}
+	}
+
+	freeaddrinfo(aiHead);
+
+	if (!bound) {
+		fprintf(stderr, "Failed to bind to %s:%s\n", addr, port);
+		rtlsdr_close(dev);
+		return 1;
 	}
 
 #ifdef _WIN32
@@ -604,6 +647,11 @@ int main(int argc, char **argv)
 			} else if(r) {
 				rlen = sizeof(remote);
 				s = accept(listensocket,(struct sockaddr *)&remote, &rlen);
+				if (s == INVALID_SOCKET) {
+					fprintf(stderr, "rtl_tcp accept error: %s\n",
+						strerror(errno));
+					continue;
+				}
 				break;
 			}
 		}
@@ -642,6 +690,7 @@ int main(int argc, char **argv)
 		pthread_join(command_thread, &status);
 
 		closesocket(s);
+		s = INVALID_SOCKET;
 
 		printf("all threads dead..\n");
 		curelem = ll_buffers;
@@ -661,7 +710,8 @@ int main(int argc, char **argv)
 out:
 	rtlsdr_close(dev);
 	closesocket(listensocket);
-	closesocket(s);
+	if (s != INVALID_SOCKET)
+		closesocket(s);
 #ifdef _WIN32
 	WSACleanup();
 #endif

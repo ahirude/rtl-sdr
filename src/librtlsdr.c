@@ -833,7 +833,12 @@ int rtlsdr_write_eeprom(rtlsdr_dev_t *dev, uint8_t *data, uint8_t offset, uint16
 	for (i = 0; i < len; i++) {
 		cmd[0] = i + offset;
 		r = rtlsdr_write_array(dev, IICB, EEPROM_ADDR, cmd, 1);
+		if (r < 0)
+			return -3;
+
 		r = rtlsdr_read_array(dev, IICB, EEPROM_ADDR, &cmd[1], 1);
+		if (r < 0)
+			return -3;
 
 		/* only write the byte if it differs */
 		if (cmd[1] == data[i])
@@ -1309,6 +1314,11 @@ uint32_t rtlsdr_get_device_count(void)
 
 	cnt = libusb_get_device_list(ctx, &list);
 
+	if (cnt < 0) {
+		libusb_exit(ctx);
+		return 0;
+	}
+
 	for (i = 0; i < cnt; i++) {
 		libusb_get_device_descriptor(list[i], &dd);
 
@@ -1330,6 +1340,7 @@ const char *rtlsdr_get_device_name(uint32_t index)
 	libusb_device **list;
 	struct libusb_device_descriptor dd;
 	rtlsdr_dongle_t *device = NULL;
+	const char *name = "";
 	uint32_t device_count = 0;
 	ssize_t cnt;
 
@@ -1339,6 +1350,11 @@ const char *rtlsdr_get_device_name(uint32_t index)
 
 	cnt = libusb_get_device_list(ctx, &list);
 
+	if (cnt < 0) {
+		libusb_exit(ctx);
+		return "";
+	}
+
 	for (i = 0; i < cnt; i++) {
 		libusb_get_device_descriptor(list[i], &dd);
 
@@ -1347,8 +1363,10 @@ const char *rtlsdr_get_device_name(uint32_t index)
 		if (device) {
 			device_count++;
 
-			if (index == device_count - 1)
+			if (index == device_count - 1) {
+				name = device->name;
 				break;
+			}
 		}
 	}
 
@@ -1356,10 +1374,7 @@ const char *rtlsdr_get_device_name(uint32_t index)
 
 	libusb_exit(ctx);
 
-	if (device)
-		return device->name;
-	else
-		return "";
+	return name;
 }
 
 int rtlsdr_get_device_usb_strings(uint32_t index, char *manufact,
@@ -1375,11 +1390,15 @@ int rtlsdr_get_device_usb_strings(uint32_t index, char *manufact,
 	uint32_t device_count = 0;
 	ssize_t cnt;
 
-	r = libusb_init(&ctx);
-	if(r < 0)
-		return r;
+	if (libusb_init(&ctx) < 0)
+		return -1;
 
 	cnt = libusb_get_device_list(ctx, &list);
+
+	if (cnt < 0) {
+		libusb_exit(ctx);
+		return -1;
+	}
 
 	for (i = 0; i < cnt; i++) {
 		libusb_get_device_descriptor(list[i], &dd);
@@ -1542,6 +1561,8 @@ int rtlsdr_open(rtlsdr_dev_t **out_dev, uint32_t index)
 
 	/* Get device manufacturer and product id */
 	r = rtlsdr_get_usb_strings(dev, dev->manufact, dev->product, NULL);
+	if (r < 0)
+		fprintf(stderr, "Warning: Failed to read USB device strings\n");
 
 	/* Probe tuners */
 	rtlsdr_set_i2c_repeater(dev, 1);
@@ -1634,8 +1655,12 @@ found:
 		break;
 	}
 
-	if (dev->tuner->init)
+	if (dev->tuner->init) {
 		r = dev->tuner->init(dev);
+		if (r < 0)
+			fprintf(stderr, "Warning: tuner initialization "
+					"failed with %d\n", r);
+	}
 
 	rtlsdr_set_i2c_repeater(dev, 0);
 
@@ -1721,8 +1746,18 @@ static void LIBUSB_CALL _libusb_callback(struct libusb_transfer *xfer)
 		if (dev->cb)
 			dev->cb(xfer->buffer, xfer->actual_length, dev->cb_ctx);
 
-		libusb_submit_transfer(xfer); /* resubmit transfer */
-		dev->xfer_errors = 0;
+		if (libusb_submit_transfer(xfer) < 0) { /* resubmit transfer */
+			/* this transfer is gone for good, account for it like a
+			 * transfer error so the read loop can terminate once all
+			 * of them are lost instead of waiting forever */
+			if (++dev->xfer_errors >= dev->xfer_buf_num) {
+				dev->dev_lost = 1;
+				fprintf(stderr, "cb resubmit failed, "
+					"canceling...\n");
+			}
+		} else {
+			dev->xfer_errors = 0;
+		}
 	} else if (LIBUSB_TRANSFER_CANCELLED != xfer->status) {
 #ifndef _WIN32
 		if (LIBUSB_TRANSFER_ERROR == xfer->status)
@@ -1756,14 +1791,30 @@ static int _rtlsdr_alloc_async_buffers(rtlsdr_dev_t *dev)
 		dev->xfer = malloc(dev->xfer_buf_num *
 				   sizeof(struct libusb_transfer *));
 
-		for(i = 0; i < dev->xfer_buf_num; ++i)
+		if (!dev->xfer)
+			return -ENOMEM;
+
+		/* zero the array first, so that a partially filled array can
+		 * be freed safely if one of the allocations below fails */
+		memset(dev->xfer, 0, dev->xfer_buf_num *
+		       sizeof(struct libusb_transfer *));
+
+		for(i = 0; i < dev->xfer_buf_num; ++i) {
 			dev->xfer[i] = libusb_alloc_transfer(0);
+
+			if (!dev->xfer[i])
+				return -ENOMEM;
+		}
 	}
 
 	if (dev->xfer_buf)
 		return -2;
 
 	dev->xfer_buf = malloc(dev->xfer_buf_num * sizeof(unsigned char *));
+
+	if (!dev->xfer_buf)
+		return -ENOMEM;
+
 	memset(dev->xfer_buf, 0, dev->xfer_buf_num * sizeof(unsigned char *));
 
 #if defined(ENABLE_ZEROCOPY) && defined (__linux__) && LIBUSB_API_VERSION >= 0x01000105
@@ -1802,10 +1853,16 @@ static int _rtlsdr_alloc_async_buffers(rtlsdr_dev_t *dev)
 	 * we need to free the buffers again if already allocated */
 	if (!dev->use_zerocopy) {
 		for (i = 0; i < dev->xfer_buf_num; ++i) {
-			if (dev->xfer_buf[i])
+			if (dev->xfer_buf[i]) {
 				libusb_dev_mem_free(dev->devh,
 						    dev->xfer_buf[i],
 						    dev->xfer_buf_len);
+				/* clear the pointer, otherwise a failing
+				 * userspace allocation below would leave a
+				 * dangling pointer behind that the cleanup
+				 * path would pass to free() */
+				dev->xfer_buf[i] = NULL;
+			}
 		}
 	}
 #endif
@@ -1894,7 +1951,17 @@ int rtlsdr_read_async(rtlsdr_dev_t *dev, rtlsdr_read_async_cb_t cb, void *ctx,
 	else
 		dev->xfer_buf_len = DEFAULT_BUF_LENGTH;
 
-	_rtlsdr_alloc_async_buffers(dev);
+	r = _rtlsdr_alloc_async_buffers(dev);
+	if (r < 0) {
+		fprintf(stderr, "Failed to allocate async buffers: %d\n", r);
+		/* -2 means buffers from a previous run are still around, they
+		 * were allocated for a different xfer_buf_num and must not be
+		 * freed using the value we just stored above */
+		if (r != -2)
+			_rtlsdr_free_async_buffers(dev);
+		dev->async_status = RTLSDR_INACTIVE;
+		return r;
+	}
 
 	for(i = 0; i < dev->xfer_buf_num; ++i) {
 		libusb_fill_bulk_transfer(dev->xfer[i],

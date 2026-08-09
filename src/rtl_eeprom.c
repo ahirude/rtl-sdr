@@ -89,14 +89,27 @@ void usage(void)
 	exit(1);
 }
 
+/* data is expected to point at an EEPROM_SIZE sized buffer */
 int get_string_descriptor(int pos, uint8_t *data, char *str)
 {
 	int len, i, j = 0;
+
+	str[0] = 0x00;
+
+	if (pos < 0 || (pos + 1) >= EEPROM_SIZE) {
+		fprintf(stderr, "Error: string descriptor out of bounds!\n");
+		return -1;
+	}
 
 	len = data[pos];
 
 	if (data[pos + 1] != 0x03)
 		fprintf(stderr, "Error: invalid string descriptor!\n");
+
+	if (len < 2 || (pos + len) > EEPROM_SIZE) {
+		fprintf(stderr, "Error: invalid string descriptor length!\n");
+		return -1;
+	}
 
 	for (i = 2; i < len; i += 2)
 		str[j++] = data[pos + i];

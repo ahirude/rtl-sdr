@@ -43,6 +43,8 @@ double atofs(char *s)
 	int len;
 	double suff = 1.0;
 	len = strlen(s);
+	if (len == 0) {
+		return 0.0;}
 	last = s[len-1];
 	s[len-1] = '\0';
 	switch (last) {
@@ -72,6 +74,8 @@ double atoft(char *s)
 	int len;
 	double suff = 1.0;
 	len = strlen(s);
+	if (len == 0) {
+		return 0.0;}
 	last = s[len-1];
 	s[len-1] = '\0';
 	switch (last) {
@@ -100,6 +104,8 @@ double atofp(char *s)
 	int len;
 	double suff = 1.0;
 	len = strlen(s);
+	if (len == 0) {
+		return 0.0;}
 	last = s[len-1];
 	s[len-1] = '\0';
 	switch (last) {
@@ -245,6 +251,14 @@ int verbose_reset_buffer(rtlsdr_dev_t *dev)
 	return r;
 }
 
+/* rtlsdr_get_device_usb_strings() leaves the buffers untouched when it fails
+ * (e.g. missing permissions), so make sure they never hold garbage */
+static void device_usb_strings(int index, char *vendor, char *product, char *serial)
+{
+	vendor[0] = product[0] = serial[0] = '\0';
+	rtlsdr_get_device_usb_strings(index, vendor, product, serial);
+}
+
 int verbose_device_search(char *s)
 {
 	int i, device_count, device, offset;
@@ -257,7 +271,7 @@ int verbose_device_search(char *s)
 	}
 	fprintf(stderr, "Found %d device(s):\n", device_count);
 	for (i = 0; i < device_count; i++) {
-		rtlsdr_get_device_usb_strings(i, vendor, product, serial);
+		device_usb_strings(i, vendor, product, serial);
 		fprintf(stderr, "  %d:  %s, %s, SN: %s\n", i, vendor, product, serial);
 	}
 	fprintf(stderr, "\n");
@@ -270,7 +284,7 @@ int verbose_device_search(char *s)
 	}
 	/* does string exact match a serial */
 	for (i = 0; i < device_count; i++) {
-		rtlsdr_get_device_usb_strings(i, vendor, product, serial);
+		device_usb_strings(i, vendor, product, serial);
 		if (strcmp(s, serial) != 0) {
 			continue;}
 		device = i;
@@ -280,7 +294,7 @@ int verbose_device_search(char *s)
 	}
 	/* does string prefix match a serial */
 	for (i = 0; i < device_count; i++) {
-		rtlsdr_get_device_usb_strings(i, vendor, product, serial);
+		device_usb_strings(i, vendor, product, serial);
 		if (strncmp(s, serial, strlen(s)) != 0) {
 			continue;}
 		device = i;
@@ -290,7 +304,7 @@ int verbose_device_search(char *s)
 	}
 	/* does string suffix match a serial */
 	for (i = 0; i < device_count; i++) {
-		rtlsdr_get_device_usb_strings(i, vendor, product, serial);
+		device_usb_strings(i, vendor, product, serial);
 		offset = strlen(serial) - strlen(s);
 		if (offset < 0) {
 			continue;}
